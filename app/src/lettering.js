@@ -1,105 +1,128 @@
-// Bold chrome caption lettering for Leonida Cover Studio.
+// Chrome retro lettering for Leonida Cover Studio.
 //
-// The title is drawn on its own offscreen canvas so horizontal retro stripes
-// can be punched into the filled glyphs with source-atop, then stamped onto
-// the cover with a drop shadow. The subtitle is set in Oswald with wide
-// tracking and flanking rules.
+// The title is drawn in Anton, filled with a vertical chrome gradient (white
+// cap, gold middle, hot pink foot) and given a dark offset shadow plus a thin
+// bright rim, so it reads like stamped metal against the cover's dark band.
+// The subtitle is Oswald in spaced capitals with a short rule after it.
+//
+// Both draw functions fit their text to the zone they are given: the title
+// shrinks until it fits the width, and wraps to a second line only when it
+// still will not fit at the smallest size.
 
-const CHROME_STOPS = [
-  [0, '#ffffff'],
-  [0.32, '#ffe9a8'],
-  [0.5, '#ffb347'],
-  [0.66, '#ff5e78'],
-  [1, '#c2185b'],
-];
+const TITLE_FACE = 'Anton, "Arial Black", sans-serif';
+const SUB_FACE = 'Oswald, "Arial Narrow", sans-serif';
 
+/**
+ * Measures a line of text at a font size. Kept tiny so the fitting loops read
+ * clearly.
+ */
+function measure(ctx, text, px, face) {
+  ctx.font = `${px}px ${face}`;
+  return ctx.measureText(text).width;
+}
+
+/**
+ * Splits a title into at most two lines that each fit `maxWidth` at `px`,
+ * breaking on spaces. Returns the lines, or the single line when it fits.
+ */
+function wrapTitle(ctx, text, px, maxWidth) {
+  if (measure(ctx, text, px, TITLE_FACE) <= maxWidth) return [text];
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const trial = line ? `${line} ${word}` : word;
+    if (measure(ctx, trial, px, TITLE_FACE) <= maxWidth) {
+      line = trial;
+    } else {
+      if (line) lines.push(line);
+      line = word;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.slice(0, 2);
+}
+
+/** The chrome gradient for a title of the given height, top to bottom. */
 function chromeGradient(ctx, top, height) {
   const g = ctx.createLinearGradient(0, top, 0, top + height);
-  for (const [stop, color] of CHROME_STOPS) g.addColorStop(stop, color);
+  g.addColorStop(0.0, '#ffffff');
+  g.addColorStop(0.28, '#fff6d8');
+  g.addColorStop(0.5, '#ffc46b');
+  g.addColorStop(0.68, '#ff7a59');
+  g.addColorStop(0.86, '#e83e8c');
+  g.addColorStop(1.0, '#b02a7a');
   return g;
 }
 
-function fitFontPx(ctx, text, family, startPx, maxWidth) {
-  let px = startPx;
-  ctx.font = `${px}px ${family}`;
-  while (px > 12 && ctx.measureText(text).width > maxWidth) {
-    px -= 2;
-    ctx.font = `${px}px ${family}`;
-  }
-  return px;
-}
-
-// Renders the title into an offscreen canvas and returns it with its metrics.
-function renderTitleSprite(text, maxWidth, maxPx) {
-  const measure = document.createElement('canvas').getContext('2d');
-  const px = fitFontPx(measure, text, 'Anton, "Arial Narrow", sans-serif', maxPx, maxWidth);
-  const width = Math.ceil(measure.measureText(text).width);
-  const pad = Math.ceil(px * 0.22);
-  const sprite = document.createElement('canvas');
-  sprite.width = width + pad * 2;
-  sprite.height = Math.ceil(px * 1.28) + pad * 2;
-  const ctx = sprite.getContext('2d');
-  ctx.font = `${px}px Anton, "Arial Narrow", sans-serif`;
-  ctx.textBaseline = 'top';
-  ctx.lineJoin = 'round';
-  ctx.lineWidth = Math.max(2, px * 0.085);
-  ctx.strokeStyle = '#160510';
-  ctx.strokeText(text, pad, pad);
-  ctx.fillStyle = chromeGradient(ctx, pad, px * 1.1);
-  ctx.fillText(text, pad, pad);
-  // Retro stripes across the lower half of the glyphs.
-  ctx.globalCompositeOperation = 'source-atop';
-  ctx.fillStyle = 'rgba(22, 5, 16, 0.55)';
-  let y = pad + px * 0.56;
-  let stripe = Math.max(1.5, px * 0.022);
-  while (y < pad + px * 1.05) {
-    ctx.fillRect(0, y, sprite.width, stripe);
-    y += stripe + px * 0.085;
-    stripe += px * 0.012;
-  }
-  ctx.globalCompositeOperation = 'source-over';
-  return { sprite, width: sprite.width, height: sprite.height, px };
-}
-
-export function drawCoverTitle(ctx, text, zone) {
-  const words = (text || '').trim().toUpperCase();
-  if (!words) return 0;
-  const maxPx = Math.min(zone.height * 0.7, zone.width / Math.max(4, words.length * 0.42));
-  const { sprite, width, height, px } = renderTitleSprite(words, zone.width, maxPx);
-  const x = zone.align === 'center' ? zone.x + (zone.width - width) / 2 : zone.x;
-  const y = zone.y + (zone.height - height) / 2 - px * 0.06;
-  ctx.save();
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
-  ctx.shadowBlur = px * 0.14;
-  ctx.shadowOffsetY = px * 0.06;
-  ctx.drawImage(sprite, x, y);
-  ctx.restore();
-  return height;
-}
-
-export function drawCoverSubtitle(ctx, text, zone) {
+/**
+ * Draws the main title into `zone`, left-aligned, in chrome. The size starts
+ * at the zone height and shrinks until the text (one line, or two when it
+ * wraps) fits the zone's width.
+ */
+export function drawChromeTitle(ctx, text, zone) {
   const words = (text || '').trim().toUpperCase();
   if (!words) return;
-  const px = Math.max(14, Math.min(zone.height * 0.3, zone.width * 0.032));
+  let px = zone.h;
+  let lines = [words];
+  const minPx = Math.max(18, zone.h * 0.32);
+  while (px > minPx) {
+    lines = wrapTitle(ctx, words, px, zone.w);
+    const widest = Math.max(...lines.map((l) => measure(ctx, l, px, TITLE_FACE)));
+    const totalH = px * 1.02 * lines.length;
+    if (widest <= zone.w && totalH <= zone.h * 1.35) break;
+    px -= 2;
+  }
+  lines = wrapTitle(ctx, words, px, zone.w);
+  const lineH = px * 1.02;
+  const totalH = lineH * lines.length;
+  let y = zone.y + (zone.h - totalH) / 2 + px * 0.86;
   ctx.save();
-  ctx.font = `600 ${px}px Oswald, "Arial Narrow", sans-serif`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.font = `${px}px ${TITLE_FACE}`;
+  for (const line of lines) {
+    // Hard offset shadow: the stamp's depth.
+    ctx.fillStyle = 'rgba(20, 4, 24, 0.9)';
+    ctx.fillText(line, zone.x + px * 0.045, y + px * 0.06);
+    // Thin bright rim above the fill, drawn as a slightly raised copy.
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.28)';
+    ctx.fillText(line, zone.x, y - px * 0.02);
+    // The chrome itself.
+    ctx.fillStyle = chromeGradient(ctx, y - px * 0.82, px);
+    ctx.fillText(line, zone.x, y);
+    // A hairline of light along the foot of each line.
+    ctx.fillStyle = 'rgba(255, 240, 200, 0.55)';
+    ctx.fillRect(zone.x, y + px * 0.05, measure(ctx, line, px, TITLE_FACE), Math.max(1, px * 0.012));
+    y += lineH;
+  }
+  ctx.restore();
+}
+
+/**
+ * Draws the subtitle into `zone`: spaced Oswald capitals in warm gold, with
+ * a short rule running after the text.
+ */
+export function drawSubtitle(ctx, text, zone) {
+  const words = (text || '').trim().toUpperCase();
+  if (!words) return;
+  const px = Math.min(zone.h * 0.72, zone.w * 0.045);
+  ctx.save();
+  ctx.font = `500 ${px}px ${SUB_FACE}`;
+  ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  try { ctx.letterSpacing = `${Math.round(px * 0.32)}px`; } catch { /* older canvas */ }
-  const textWidth = ctx.measureText(words).width + px * 0.32;
-  const x = zone.align === 'center' ? zone.x + (zone.width - textWidth) / 2 : zone.x;
-  const y = zone.y + zone.height / 2;
-  ctx.fillStyle = '#ffd166';
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
-  ctx.shadowBlur = px * 0.25;
-  ctx.fillText(words, x, y);
-  // Flanking rules.
-  const ruleGap = px * 0.7;
-  const ruleLen = Math.min(px * 2.4, zone.width * 0.06);
-  ctx.shadowBlur = 0;
-  ctx.fillStyle = 'rgba(255, 209, 102, 0.85)';
-  if (x - ruleGap - ruleLen > zone.x) ctx.fillRect(x - ruleGap - ruleLen, y - 1, ruleLen, 2);
-  if (x + textWidth + ruleGap + ruleLen < zone.x + zone.width) {
-    ctx.fillRect(x + textWidth + ruleGap, y - 1, ruleLen, 2);
+  // Letter-spacing by hand: a hair space between letters, since canvas has no
+  // spacing property in every browser.
+  const spaced = words.split('').join(' ');
+  const width = ctx.measureText(spaced).width;
+  const y = zone.y + zone.h / 2;
+  ctx.fillStyle = '#e8b45c';
+  ctx.fillText(spaced, zone.x, y);
+  const ruleX = zone.x + width + px * 0.9;
+  const ruleW = Math.min(zone.w - (ruleX - zone.x), px * 4);
+  if (ruleW > px) {
+    ctx.fillStyle = 'rgba(232, 180, 92, 0.75)';
+    ctx.fillRect(ruleX, y - Math.max(1, px * 0.04), ruleW, Math.max(2, px * 0.08));
   }
   ctx.restore();
 }

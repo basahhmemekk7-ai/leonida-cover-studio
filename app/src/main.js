@@ -1,373 +1,323 @@
-// Leonida Cover Studio: bootstrap and editor wiring.
+// Leonida Cover Studio — the editor.
 //
-// Owns the cover state (size, layout, grade, caption, per-panel photo views),
-// renders the live preview, and wires every control: photo upload and
-// drag-drop, the sample tray, panel picking by clicking the preview, drag to
-// pan a photo inside its panel, zoom, caption editing, and PNG export.
+// This module owns the page: it builds the state (layout, size, grade, title,
+// subtitle, photo store), wires every control to it, and repaints the preview
+// canvas whenever anything changes. The cover itself is drawn by render.js;
+// this file only decides what the cover holds.
+//
+// Interactions:
+// - Click a panel in the preview to select it; drag inside it to pan its photo.
+// - Click a photo in the library to put it in the selected panel; double-click
+//   to fill every panel with it.
+// - Drop photos onto the drop zone (or use Choose photos) to add your own.
+// - "Make me a cover" loads a ready-made demo cover in one click.
+// - Export downloads the cover as a PNG at any of the three post sizes.
 
-import { LAYOUTS, SIZE_PRESETS, MAX_PANELS, panelAtPoint } from './layouts.js';
-import { GRADES } from './grades.js';
-import { PhotoStore, SAMPLE_PHOTOS, defaultPanelView } from './photoStore.js';
-import { renderCover, coverSourceRect } from './renderCover.js';
-import { exportCoverPng, exportAllSizes } from './exportPng.js';
-import { runShotMode } from './shots.js';
+import { PhotoStore } from './photos.js';
+import { drawCover, panelRects } from './render.js';
+import { exportPng, exportAllSizes } from './export.js';
+import { runShot } from './shots.js';
+import { SIZES, LAYOUTS, sizeById, layoutById } from './layouts.js';
+import { GRADES, gradeById } from './grades.js';
 
-const DEMO_CAPTION = 'LEONIDA NIGHTS';
-const DEMO_SUBTITLE = 'VICE CITY \u2022 2026';
-const DEMO_PHOTOS = ['boulevard', 'sunset', 'pier', 'neon', 'sunset', 'neon'];
-// Five-panel layouts reuse one sample: crop it differently so it reads as
-// another shot instead of a repeat.
-const DEMO_VIEW_OVERRIDES = {
-  4: { zoom: 1.8, panX: 0.5, panY: -0.4 },
-  5: { zoom: 1.6, panX: -0.4, panY: 0.3 },
-};
+const PANEL_COUNT = 5;
 
 const state = {
-  size: 'square',
-  layout: 'heroGrid',
+  layout: 'hero',
+  size: sizeById('square'),
   grade: 'sunset',
-  caption: DEMO_CAPTION,
-  subtitle: DEMO_SUBTITLE,
-  popout: true,
-  grain: true,
-  selected: 0,
-  panels: Array.from({ length: MAX_PANELS }, (_, i) => defaultPanelView(DEMO_PHOTOS[i])),
+  title: 'Leonida Nights',
+  subtitle: 'Vice City • 2026',
+  store: new PhotoStore(PANEL_COUNT),
 };
 
-const store = new PhotoStore();
-const $ = (id) => document.getElementById(id);
-let previewCanvas = null;
-let previewLayout = null;
-let drag = null;
+const canvas = document.getElementById('preview');
+const statusEl = document.getElementById('status');
+const panelLabel = document.getElementById('panel-label');
+const zoomSlider = document.getElementById('zoom');
+const zoomValue = document.getElementById('zoom-value');
+const libraryEl = document.getElementById('library');
+const titleInput = document.getElementById('title');
+const subtitleInput = document.getElementById('subtitle');
+const dropZone = document.getElementById('dropzone');
+const fileInput = document.getElementById('file-input');
 
-function renderPreview() {
-  if (!previewCanvas) return;
-  previewLayout = renderCover(previewCanvas, state, store, { selection: true });
-  syncPanelBar();
+/** Paints the preview canvas from the current state. */
+function repaint() {
+  drawCover(canvas, state);
+  refreshPanelBar();
 }
 
-function sizePreviewCanvas() {
-  const preset = SIZE_PRESETS[state.size];
-  const scale = Math.min(1, 1100 / Math.max(preset.width, preset.height));
-  previewCanvas.width = Math.round(preset.width * scale);
-  previewCanvas.height = Math.round(preset.height * scale);
+/** Says something in the status line under the preview. */
+function say(text) {
+  statusEl.textContent = text;
 }
 
-function renderCoverAt(width, height) {
-  previewCanvas.width = width;
-  previewCanvas.height = height;
-  previewLayout = renderCover(previewCanvas, state, store, { selection: false });
+/** The label above the zoom slider: which panel is selected, and its photo. */
+function refreshPanelBar() {
+  const i = state.store.selected;
+  const a = state.store.selectedAssignment();
+  const photo = state.store.photos.get(a.photoId);
+  const role = i === 0 ? 'Hero' : `Panel ${i + 1}`;
+  panelLabel.textContent = `Panel ${i + 1} of ${PANEL_COUNT} • ${role} — ${photo ? photo.name : 'no photo'}`;
+  zoomSlider.value = String(a.zoom);
+  zoomValue.textContent = `${a.zoom.toFixed(2)}×`;
 }
 
-function setStatus(text) {
-  const el = $('statusLine');
-  if (el) el.textContent = text;
-}
-
-function syncPanelBar() {
-  const view = state.panels[state.selected];
-  const photo = view ? store.get(view.photoId) : undefined;
-  const nameEl = $('panelPhotoName');
-  if (nameEl) nameEl.textContent = photo ? photo.name : 'No photo';
-  const zoomEl = $('zoomSlider');
-  if (zoomEl) zoomEl.value = String(view?.zoom ?? 1);
-  const zoomLabel = $('zoomValue');
-  if (zoomLabel) zoomLabel.textContent = `${(view?.zoom ?? 1).toFixed(2)}x`;
-  document.querySelectorAll('.photo-thumb').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.photoId === view?.photoId);
-  });
-  const count = previewLayout ? previewLayout.panels.length : 0;
-  const panelLabel = $('panelLabel');
-  if (panelLabel) {
-    panelLabel.textContent = `Panel ${state.selected + 1} of ${count}` +
-      (previewLayout?.panels[state.selected]?.hero ? ' \u2022 Hero' : '');
-  }
-}
-
-function smartDefaultView(photoId, panelIndex) {
-  const view = defaultPanelView(photoId);
-  const photo = store.get(photoId);
-  const panel = previewLayout?.panels[panelIndex];
-  if (!photo || !panel) return view;
-  const imgAspect = photo.img.naturalWidth / photo.img.naturalHeight;
-  const panelAspect = panel.width / panel.height;
-  // A tall photo in a wide panel crops hard vertically: favour the top, where
-  // faces usually are, instead of the middle of the frame.
-  if (imgAspect < panelAspect * 0.85) view.panY = -0.5;
-  return view;
-}
-
-function assignPhotoToSelected(photoId, resetView = true) {
-  const view = state.panels[state.selected];
-  if (!view) return;
-  view.photoId = photoId;
-  if (resetView) {
-    const fresh = smartDefaultView(photoId, state.selected);
-    view.zoom = fresh.zoom;
-    view.panX = fresh.panX;
-    view.panY = fresh.panY;
-  }
-  renderPreview();
-}
-
-function assignPhotoToAllPanels(photoId) {
-  state.panels.forEach((view, i) => {
-    const fresh = smartDefaultView(photoId, i);
-    view.photoId = photoId;
-    view.zoom = fresh.zoom;
-    view.panX = fresh.panX;
-    view.panY = fresh.panY;
-  });
-  renderPreview();
-}
-
-function addPhotoThumb(photo) {
-  const tray = $('photoTray');
-  if (!tray) return;
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'photo-thumb';
-  btn.dataset.photoId = photo.id;
-  btn.title = `${photo.name} \u2014 click to use in the selected panel, double-click for all panels`;
-  const img = document.createElement('img');
-  img.src = photo.sample ? `samples/${photo.id}.jpg` : photo.objectUrl;
-  img.alt = photo.name;
-  const label = document.createElement('span');
-  label.textContent = photo.name;
-  btn.append(img, label);
-  btn.addEventListener('click', () => assignPhotoToSelected(photo.id));
-  btn.addEventListener('dblclick', () => assignPhotoToAllPanels(photo.id));
-  tray.appendChild(btn);
-}
-
-async function handleFiles(files) {
-  const images = [...files].filter((f) => f.type.startsWith('image/'));
-  if (!images.length) {
-    setStatus('That was not an image file. Drop a JPG, PNG or WebP photo.');
-    return;
-  }
-  let first = null;
-  for (const file of images) {
-    try {
-      const photo = await store.loadFile(file);
-      addPhotoThumb(photo);
-      first ??= photo;
-    } catch {
-      setStatus(`Could not read ${file.name}. Try another photo.`);
+/** Rebuilds the photo library thumbnails from the store. */
+function refreshLibrary() {
+  libraryEl.innerHTML = '';
+  for (const photo of state.store.library()) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'thumb';
+    button.title = photo.name;
+    button.dataset.photo = photo.id;
+    const img = state.store.imageFor(photo.id);
+    const thumb = document.createElement('canvas');
+    thumb.width = 120;
+    thumb.height = 90;
+    const tctx = thumb.getContext('2d');
+    if (img) {
+      const iw = img.naturalWidth ?? img.width;
+      const ih = img.naturalHeight ?? img.height;
+      const s = Math.max(thumb.width / iw, thumb.height / ih);
+      tctx.drawImage(img, (thumb.width - iw * s) / 2, (thumb.height - ih * s) / 2, iw * s, ih * s);
     }
+    const caption = document.createElement('span');
+    caption.textContent = photo.name;
+    button.append(thumb, caption);
+    button.addEventListener('click', () => {
+      state.store.assignToSelected(photo.id);
+      repaint();
+      say(`${photo.name} is in the selected panel.`);
+    });
+    button.addEventListener('dblclick', () => {
+      state.store.assignToAll(photo.id);
+      repaint();
+      say(`${photo.name} fills every panel.`);
+    });
+    libraryEl.appendChild(button);
   }
-  if (first) {
-    assignPhotoToSelected(first.id);
-    setStatus(`${first.name} loaded into panel ${state.selected + 1}. Drag it to position, then export.`);
+}
+
+/** Marks the active button in a group (layout, grade, size). */
+function markActive(groupEl, id) {
+  for (const button of groupEl.querySelectorAll('button')) {
+    button.classList.toggle('active', button.dataset.value === id);
   }
 }
 
-async function loadDemoCover(overrides = {}) {
-  if (overrides.size && SIZE_PRESETS[overrides.size]) state.size = overrides.size;
-  if (overrides.layout && LAYOUTS[overrides.layout]) state.layout = overrides.layout;
-  if (overrides.grade && GRADES[overrides.grade]) state.grade = overrides.grade;
-  if (overrides.caption) state.caption = overrides.caption;
-  if (overrides.subtitle) state.subtitle = overrides.subtitle;
-  await store.loadSamples();
-  sizePreviewCanvas();
-  previewLayout = (LAYOUTS[state.layout] ?? LAYOUTS.heroGrid)
-    .build(previewCanvas.width, previewCanvas.height);
-  state.panels = DEMO_PHOTOS.map((id, i) => {
-    const view = smartDefaultView(id, i);
-    Object.assign(view, DEMO_VIEW_OVERRIDES[i] ?? {});
-    return view;
-  });
-  state.selected = 0;
-  syncControlValues();
-  renderPreview();
+function setLayout(id) {
+  state.layout = layoutById(id).id;
+  markActive(document.getElementById('layout-group'), state.layout);
+  repaint();
 }
 
-function syncControlValues() {
-  const captionEl = $('captionInput');
-  if (captionEl) captionEl.value = state.caption;
-  const subtitleEl = $('subtitleInput');
-  if (subtitleEl) subtitleEl.value = state.subtitle;
-  document.querySelectorAll('[data-layout]').forEach((b) => {
-    b.classList.toggle('active', b.dataset.layout === state.layout);
-  });
-  document.querySelectorAll('[data-size]').forEach((b) => {
-    b.classList.toggle('active', b.dataset.size === state.size);
-  });
-  document.querySelectorAll('[data-grade]').forEach((b) => {
-    b.classList.toggle('active', b.dataset.grade === state.grade);
-  });
-  const popoutEl = $('popoutToggle');
-  if (popoutEl) popoutEl.checked = state.popout;
-  const grainEl = $('grainToggle');
-  if (grainEl) grainEl.checked = state.grain;
+function setGrade(id) {
+  state.grade = gradeById(id).id;
+  markActive(document.getElementById('grade-group'), state.grade);
+  repaint();
 }
 
-function wireControls() {
-  document.querySelectorAll('[data-layout]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      state.layout = btn.dataset.layout;
-      state.selected = 0;
-      syncControlValues();
-      renderPreview();
-    });
-  });
-  document.querySelectorAll('[data-size]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      state.size = btn.dataset.size;
-      syncControlValues();
-      sizePreviewCanvas();
-      renderPreview();
-    });
-  });
-  document.querySelectorAll('[data-grade]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      state.grade = btn.dataset.grade;
-      syncControlValues();
-      renderPreview();
-    });
-  });
+function setSize(id) {
+  state.size = sizeById(id);
+  markActive(document.getElementById('size-group'), state.size.id);
+  repaint();
+}
 
-  $('captionInput').addEventListener('input', (e) => {
-    state.caption = e.target.value;
-    renderPreview();
-  });
-  $('subtitleInput').addEventListener('input', (e) => {
-    state.subtitle = e.target.value;
-    renderPreview();
-  });
-  $('popoutToggle').addEventListener('change', (e) => {
-    state.popout = e.target.checked;
-    renderPreview();
-  });
-  $('grainToggle').addEventListener('change', (e) => {
-    state.grain = e.target.checked;
-    renderPreview();
-  });
-  $('zoomSlider').addEventListener('input', (e) => {
-    const view = state.panels[state.selected];
-    if (view) view.zoom = Number(e.target.value);
-    renderPreview();
-  });
-  $('fillAllButton').addEventListener('click', () => {
-    const view = state.panels[state.selected];
-    if (view) assignPhotoToAllPanels(view.photoId);
-  });
-  $('demoButton').addEventListener('click', async () => {
-    setStatus('Building your demo cover\u2026');
-    await loadDemoCover({});
-    setStatus('Demo cover ready. Swap any photo, edit the caption, then export.');
-  });
-  $('exportButton').addEventListener('click', async () => {
-    const preset = SIZE_PRESETS[state.size];
-    setStatus(`Exporting ${preset.dims} PNG\u2026`);
-    try {
-      const result = await exportCoverPng(state, store, state.size);
-      setStatus(`Exported ${result.width} x ${result.height} PNG (${Math.round(result.bytes / 1024)} KB).`);
-    } catch {
-      setStatus('Export failed in this browser. Try again.');
+function setTitle(text) {
+  state.title = text;
+  titleInput.value = text;
+  repaint();
+}
+
+function setSubtitle(text) {
+  state.subtitle = text;
+  subtitleInput.value = text;
+  repaint();
+}
+
+/** Points the five panels at five photo ids, in order. */
+function setLineup(ids) {
+  ids.forEach((id, i) => {
+    if (i < PANEL_COUNT && state.store.photos.has(id)) {
+      state.store.assignments[i].photoId = id;
     }
   });
-  $('exportAllButton').addEventListener('click', async () => {
-    setStatus('Exporting all three sizes\u2026');
-    try {
-      const results = await exportAllSizes(state, store);
-      setStatus(`Exported ${results.length} PNGs: square, portrait and landscape.`);
-    } catch {
-      setStatus('Export failed in this browser. Try again.');
-    }
-  });
-
-  const fileInput = $('photoInput');
-  $('uploadButton').addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', () => {
-    handleFiles(fileInput.files);
-    fileInput.value = '';
-  });
-
-  const dropZone = $('dropZone');
-  ['dragenter', 'dragover'].forEach((type) => dropZone.addEventListener(type, (e) => {
-    e.preventDefault();
-    dropZone.classList.add('dragging');
-  }));
-  ['dragleave', 'drop'].forEach((type) => dropZone.addEventListener(type, (e) => {
-    e.preventDefault();
-    dropZone.classList.remove('dragging');
-  }));
-  dropZone.addEventListener('drop', (e) => handleFiles(e.dataTransfer.files));
+  repaint();
 }
 
+/** The one-click demo: a full cover, ready to export. */
+function demoCover() {
+  setLayout('hero');
+  setGrade('sunset');
+  setSize('square');
+  setTitle('Leonida Nights');
+  setSubtitle('Vice City • 2026');
+  setLineup(['boulevard', 'sunset-bay', 'pier', 'neon-street', 'sunset-bay']);
+  state.store.selected = 0;
+  repaint();
+  say('Demo cover loaded. Click a panel, pick a photo, drag to position it.');
+}
+
+/** Which panel (if any) a point on the canvas falls in, in canvas pixels. */
+function panelAt(cx, cy) {
+  const rects = panelRects(state);
+  return rects.findIndex((r) => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h);
+}
+
+/** Canvas coordinates of a pointer event, in the canvas's own pixels. */
 function canvasPoint(event) {
-  const rect = previewCanvas.getBoundingClientRect();
+  const box = canvas.getBoundingClientRect();
   return {
-    x: (event.clientX - rect.left) * (previewCanvas.width / rect.width),
-    y: (event.clientY - rect.top) * (previewCanvas.height / rect.height),
+    x: (event.clientX - box.left) * (canvas.width / box.width),
+    y: (event.clientY - box.top) * (canvas.height / box.height),
   };
 }
 
-function wireCanvasDrag() {
-  previewCanvas.addEventListener('pointerdown', (event) => {
-    const point = canvasPoint(event);
-    const index = previewLayout ? panelAtPoint(previewLayout, point.x, point.y) : -1;
-    if (index < 0) return;
-    state.selected = index;
-    previewCanvas.setPointerCapture(event.pointerId);
-    drag = { x: point.x, y: point.y, panel: index };
-    renderPreview();
+// --- Pointer: click to select a panel, drag to pan its photo. ---
+let drag = null;
+canvas.addEventListener('pointerdown', (event) => {
+  const p = canvasPoint(event);
+  const i = panelAt(p.x, p.y);
+  if (i === -1) return;
+  state.store.selected = i;
+  refreshPanelBar();
+  const rects = panelRects(state);
+  drag = { start: p, rect: rects[i] };
+  canvas.setPointerCapture(event.pointerId);
+});
+canvas.addEventListener('pointermove', (event) => {
+  if (!drag) return;
+  const p = canvasPoint(event);
+  const dx = (p.x - drag.start.x) / drag.rect.w;
+  const dy = (p.y - drag.start.y) / drag.rect.h;
+  state.store.panSelected(dx, dy);
+  drag.start = p;
+  repaint();
+});
+canvas.addEventListener('pointerup', () => {
+  drag = null;
+});
+
+// --- Controls. (Layout, grade and size buttons are built by buildGroups
+// below, which wires each one as it creates it.) ---
+titleInput.addEventListener('input', () => {
+  state.title = titleInput.value;
+  repaint();
+});
+subtitleInput.addEventListener('input', () => {
+  state.subtitle = subtitleInput.value;
+  repaint();
+});
+zoomSlider.addEventListener('input', () => {
+  state.store.setZoom(Number(zoomSlider.value));
+  repaint();
+});
+document.getElementById('fill-all').addEventListener('click', () => {
+  state.store.assignToAll(state.store.selectedAssignment().photoId);
+  repaint();
+  say('This photo now fills every panel.');
+});
+document.getElementById('demo').addEventListener('click', demoCover);
+document.getElementById('export-all').addEventListener('click', async () => {
+  say('Exporting all three sizes…');
+  const names = await exportAllSizes(state);
+  say(`Saved ${names.join(', ')}`);
+});
+for (const button of document.querySelectorAll('[data-export]')) {
+  button.addEventListener('click', async () => {
+    const name = await exportPng(state, button.dataset.export);
+    say(`Saved ${name}`);
   });
-  previewCanvas.addEventListener('pointermove', (event) => {
-    if (!drag) return;
-    const point = canvasPoint(event);
-    const view = state.panels[drag.panel];
-    const panel = previewLayout?.panels[drag.panel];
-    const photo = view ? store.get(view.photoId) : undefined;
-    if (!view || !panel || !photo) return;
-    const src = coverSourceRect(photo.img, panel, view);
-    if (src.slackX > 0) {
-      view.panX += ((point.x - drag.x) * src.srcW / panel.width) / src.slackX;
-      view.panX = Math.max(-1, Math.min(1, view.panX));
-    }
-    if (src.slackY > 0) {
-      view.panY += ((point.y - drag.y) * src.srcH / panel.height) / src.slackY;
-      view.panY = Math.max(-1, Math.min(1, view.panY));
-    }
-    drag.x = point.x;
-    drag.y = point.y;
-    renderPreview();
-  });
-  const endDrag = () => { drag = null; };
-  previewCanvas.addEventListener('pointerup', endDrag);
-  previewCanvas.addEventListener('pointercancel', endDrag);
 }
 
-async function init() {
-  previewCanvas = $('previewCanvas');
-  wireControls();
-  wireCanvasDrag();
-
-  try {
-    await Promise.all([
-      document.fonts.load('100px Anton'),
-      document.fonts.load('600 40px Oswald'),
-      document.fonts.ready,
-    ]);
-  } catch { /* fall back to system fonts */ }
-
-  await store.loadSamples();
-  for (const sample of SAMPLE_PHOTOS) {
-    const photo = store.get(sample.id);
-    if (photo) addPhotoThumb(photo);
+// --- Uploads: file picker and drag-and-drop onto the zone. ---
+fileInput.addEventListener('change', async () => {
+  const added = await state.store.addUploads(fileInput.files);
+  if (added.length) {
+    refreshLibrary();
+    state.store.assignToSelected(added[0]);
+    repaint();
+    say(`${added.length} photo${added.length > 1 ? 's' : ''} added. Nothing leaves your machine.`);
   }
-
-  const shotTaken = await runShotMode(new URLSearchParams(location.search), {
-    loadDemoCover,
-    renderCoverAt,
-    renderPreview,
-    setStatus,
+  fileInput.value = '';
+});
+for (const type of ['dragenter', 'dragover']) {
+  dropZone.addEventListener(type, (event) => {
+    event.preventDefault();
+    dropZone.classList.add('dragging');
   });
-  if (!shotTaken) {
-    await loadDemoCover({});
-    setStatus('Demo cover loaded. Click a panel, pick a photo, drag to position it.');
+}
+for (const type of ['dragleave', 'drop']) {
+  dropZone.addEventListener(type, (event) => {
+    event.preventDefault();
+    dropZone.classList.remove('dragging');
+  });
+}
+dropZone.addEventListener('drop', async (event) => {
+  const added = await state.store.addUploads(event.dataTransfer.files);
+  if (added.length) {
+    refreshLibrary();
+    state.store.assignToSelected(added[0]);
+    repaint();
+    say(`${added.length} photo${added.length > 1 ? 's' : ''} added. Nothing leaves your machine.`);
+  }
+});
+
+// --- Boot: load the samples, build the control groups, then the demo cover
+// (or a shot scene when ?shot= is present). ---
+const app = { setLayout, setGrade, setSize, setTitle, setSubtitle, setLineup, repaint, state };
+
+function buildGroups() {
+  const layoutGroup = document.getElementById('layout-group');
+  for (const l of LAYOUTS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.value = l.id;
+    b.innerHTML = `<span class="glyph" aria-hidden="true">${layoutGlyph(l.id)}</span><span>${l.name}</span>`;
+    b.title = l.blurb;
+    b.addEventListener('click', () => setLayout(l.id));
+    layoutGroup.appendChild(b);
+  }
+  const gradeGroup = document.getElementById('grade-group');
+  for (const g of GRADES) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.value = g.id;
+    b.innerHTML = `<span class="swatch" style="background:linear-gradient(135deg, ${g.top}, ${g.bottom})"></span><span>${g.name}</span>`;
+    b.title = g.blurb;
+    b.addEventListener('click', () => setGrade(g.id));
+    gradeGroup.appendChild(b);
+  }
+  const sizeGroup = document.getElementById('size-group');
+  for (const s of SIZES) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.value = s.id;
+    b.innerHTML = `<span>${s.name}</span><small>${s.label}</small>`;
+    b.addEventListener('click', () => setSize(s.id));
+    sizeGroup.appendChild(b);
   }
 }
 
-init();
+/** A tiny inline diagram of a layout, drawn as nested boxes. */
+function layoutGlyph(id) {
+  if (id === 'strip') {
+    return '<i class="box wide"></i><i class="box"></i><i class="box"></i><i class="box"></i><i class="box"></i>';
+  }
+  if (id === 'film') {
+    return '<i class="box tall"></i><i class="box stack"></i><i class="box stack"></i>';
+  }
+  return '<i class="box hero"></i><i class="box"></i><i class="box"></i><i class="box"></i><i class="box"></i>';
+}
+
+buildGroups();
+await state.store.loadSamples();
+refreshLibrary();
+const query = new URLSearchParams(location.search);
+const shot = await runShot(app, query);
+if (!shot) {
+  demoCover();
+}

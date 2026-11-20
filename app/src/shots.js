@@ -1,39 +1,47 @@
-// Fixed scenes for screenshots: ?shot=cover shows one exported cover alone,
-// full-bleed, at the screenshot's own size; ?shot=editor shows the editor
-// with the demo cover loaded. Query parameters pick the size, layout, grade
-// and caption. window.__shotReady is set once the scene has painted.
+// Fixed scenes for screenshots.
+//
+// A `?shot=` query puts the app into a known state for a screenshot instead
+// of the default editor: `?shot=cover` hides the controls and shows the cover
+// alone, `?shot=editor` shows the editor with a photo loaded. The other query
+// parameters pick the scene:
+//
+//   layout   hero | strip | film
+//   grade    sunset | neon | heat | noir
+//   size     square | portrait | landscape
+//   title    the chrome title
+//   subtitle the small caps line under it
+//   photos   five comma-separated photo ids, one per panel
+//
+// window.__shotReady is set once the scene has painted, so a screenshot tool
+// can wait for it instead of guessing a delay.
 
-import { SIZE_PRESETS } from './layouts.js';
+/** The default five-panel photo line-up for a shot scene. */
+const DEFAULT_PHOTOS = ['boulevard', 'sunset-bay', 'pier', 'neon-street', 'sunset-bay'];
 
-function shotSize(query) {
-  const key = query.get('size') ?? 'wide';
-  return SIZE_PRESETS[key] ?? SIZE_PRESETS.wide;
-}
-
-export async function runShotMode(query, api) {
+/**
+ * Applies a shot scene to the editor `app` (the object main.js builds):
+ * state first, then a repaint, then the ready flag. Returns true when a shot
+ * query was present.
+ */
+export async function runShot(app, query) {
   const shot = query.get('shot');
   if (!shot) return false;
-
-  const caption = query.get('caption');
-  const subtitle = query.get('subtitle');
+  if (shot === 'cover') document.body.classList.add('shot-cover');
   const layout = query.get('layout');
   const grade = query.get('grade');
   const size = query.get('size');
-
-  if (shot === 'cover') {
-    document.body.classList.add('shot-cover');
-    await api.loadDemoCover({ caption, subtitle, layout, grade, size });
-    const preset = shotSize(query);
-    api.renderCoverAt(preset.width, preset.height);
-  } else if (shot === 'editor') {
-    await api.loadDemoCover({ caption, subtitle, layout, grade, size });
-    api.setStatus('Demo cover loaded. Click a panel, pick a photo, drag to position it.');
-  } else {
-    return false;
-  }
-
+  if (layout) app.setLayout(layout);
+  if (grade) app.setGrade(grade);
+  if (size) app.setSize(size);
+  const title = query.get('title');
+  const subtitle = query.get('subtitle');
+  if (title !== null) app.setTitle(title);
+  if (subtitle !== null) app.setSubtitle(subtitle);
+  const photos = (query.get('photos') ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const lineup = photos.length === 5 ? photos : DEFAULT_PHOTOS;
+  app.setLineup(lineup);
   await document.fonts.ready;
-  if (shot === 'editor') api.renderPreview();
+  app.repaint();
   await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   window.__shotReady = true;
   return true;

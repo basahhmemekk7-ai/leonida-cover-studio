@@ -1,70 +1,77 @@
 // Colour grades for Leonida Cover Studio.
 //
-// A grade is a canvas filter applied while each photo is drawn, plus a
-// two-stop gradient washed over the panel with a blend mode, plus a gentle
-// whole-cover wash so the panels and the title share one palette.
+// A grade is two things at once: a CSS filter string the canvas applies while
+// it draws a photo (saturation, contrast, warmth), and a pair of translucent
+// gradient washes laid over the panel afterwards (a warm wash from the top,
+// a cool one from the bottom, or the reverse). Keeping the two apart lets the
+// filter do the heavy lifting on tone while the washes carry the mood.
+//
+// Grades are looked up by id; unknown ids fall back to Vice Sunset so a bad
+// query string can never break a render.
 
-export const GRADES = {
-  sunset: {
+export const GRADES = [
+  {
+    id: 'sunset',
     name: 'Vice Sunset',
-    filter: 'saturate(1.42) contrast(1.07) sepia(0.14) hue-rotate(-12deg) brightness(1.02)',
-    overlayStops: ['#ff9e57', '#d63384'],
-    overlayBlend: 'soft-light',
-    overlayAlpha: 0.5,
-    washStops: ['rgba(255,122,61,0.10)', 'rgba(214,51,132,0.12)'],
-    swatch: 'linear-gradient(135deg,#ffc46b,#ff2e88)',
+    blurb: 'Golden hour over the bay',
+    // Warm, slightly lifted: the classic Leonida postcard.
+    filter: 'saturate(1.35) contrast(1.06) brightness(1.04) sepia(0.14)',
+    top: 'rgba(255, 122, 26, 0.16)',
+    bottom: 'rgba(214, 36, 120, 0.28)',
+    frame: '#ffd9a0',
   },
-  neon: {
+  {
+    id: 'neon',
     name: 'Neon Night',
-    filter: 'saturate(1.5) contrast(1.13) hue-rotate(-10deg) brightness(0.97)',
-    overlayStops: ['#22d3ee', '#a855f7'],
-    overlayBlend: 'overlay',
-    overlayAlpha: 0.3,
-    washStops: ['rgba(34,211,238,0.08)', 'rgba(168,85,247,0.12)'],
-    swatch: 'linear-gradient(135deg,#22d3ee,#a855f7)',
+    blurb: 'After dark on the strip',
+    // Cool shadows, hot highlights: night neon.
+    filter: 'saturate(1.45) contrast(1.14) brightness(0.94) hue-rotate(-12deg)',
+    top: 'rgba(64, 32, 160, 0.30)',
+    bottom: 'rgba(0, 229, 255, 0.14)',
+    frame: '#b8f3ff',
   },
-  heatwave: {
+  {
+    id: 'heat',
     name: 'Heatwave',
-    filter: 'saturate(1.58) contrast(1.1) sepia(0.28) hue-rotate(-20deg) brightness(1.04)',
-    overlayStops: ['#ffb347', '#ff2e63'],
-    overlayBlend: 'soft-light',
-    overlayAlpha: 0.55,
-    washStops: ['rgba(255,179,71,0.12)', 'rgba(255,46,99,0.12)'],
-    swatch: 'linear-gradient(135deg,#ffb347,#ff2e63)',
+    blurb: 'Midday glare, turned up',
+    // Scorched and saturated: the sun at noon.
+    filter: 'saturate(1.6) contrast(1.10) brightness(1.08) sepia(0.22)',
+    top: 'rgba(255, 214, 64, 0.18)',
+    bottom: 'rgba(255, 84, 0, 0.30)',
+    frame: '#ffe9b0',
   },
-  noir: {
+  {
+    id: 'noir',
     name: 'Mono Noir',
-    filter: 'grayscale(1) contrast(1.2) brightness(1.03)',
-    overlayStops: ['#8ab4ff', '#1a1a2e'],
-    overlayBlend: 'overlay',
-    overlayAlpha: 0.28,
-    washStops: ['rgba(138,180,255,0.06)', 'rgba(10,10,26,0.14)'],
-    swatch: 'linear-gradient(135deg,#e8ecf4,#23233a)',
+    blurb: 'Black and white, hard light',
+    // Stripped to grey with a crushed, contrasty finish.
+    filter: 'grayscale(1) contrast(1.22) brightness(0.98)',
+    top: 'rgba(255, 255, 255, 0.06)',
+    bottom: 'rgba(0, 0, 0, 0.34)',
+    frame: '#e8e8e8',
   },
-};
+];
 
-export function gradeFor(key) {
-  return GRADES[key] ?? GRADES.sunset;
+/** The grade for an id, or Vice Sunset when the id is unknown. */
+export function gradeById(id) {
+  return GRADES.find((g) => g.id === id) ?? GRADES[0];
 }
 
-// Paints the grade's overlay gradient over one panel rectangle.
-export function paintGradeOverlay(ctx, grade, rect) {
-  const g = ctx.createLinearGradient(rect.x, rect.y, rect.x, rect.y + rect.height);
-  g.addColorStop(0, grade.overlayStops[0]);
-  g.addColorStop(1, grade.overlayStops[1]);
-  ctx.save();
-  ctx.globalCompositeOperation = grade.overlayBlend;
-  ctx.globalAlpha = grade.overlayAlpha;
-  ctx.fillStyle = g;
-  ctx.fillRect(rect.x, rect.y, rect.width, rect.height);
-  ctx.restore();
-}
-
-// Paints the grade's whole-cover wash.
-export function paintGradeWash(ctx, grade, width, height) {
-  const g = ctx.createLinearGradient(0, 0, 0, height);
-  g.addColorStop(0, grade.washStops[0]);
-  g.addColorStop(1, grade.washStops[1]);
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, width, height);
+/**
+ * Paints a grade's two washes over a rectangle: a soft tint from the top edge
+ * fading out halfway down, and a stronger one rising from the bottom edge.
+ * Call it after the photo is drawn and before the frame goes on.
+ */
+export function washPanel(ctx, rect, grade) {
+  const { x, y, w, h } = rect;
+  const top = ctx.createLinearGradient(0, y, 0, y + h * 0.55);
+  top.addColorStop(0, grade.top);
+  top.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = top;
+  ctx.fillRect(x, y, w, h * 0.55);
+  const bottom = ctx.createLinearGradient(0, y + h * 0.4, 0, y + h);
+  bottom.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  bottom.addColorStop(1, grade.bottom);
+  ctx.fillStyle = bottom;
+  ctx.fillRect(x, y + h * 0.4, w, h * 0.6);
 }

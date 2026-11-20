@@ -3,21 +3,113 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Cover Snap</title>
-<link rel="stylesheet" href="./style.css">
+<title>Leonida Cover Studio — GTA-style cover art maker</title>
+<meta name="description" content="Turn your photos and a caption into GTA-style multi-panel cover art, in your browser, fully offline.">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-<main class="app">
-  <section class="controls">
-    <h1>Cover Snap</h1>
-    <p>A photo and a caption, made into a square cover.</p>
-    <label>Photo <input id="photo" type="file" accept="image/*"></label>
-    <label>Caption <input id="caption" type="text" maxlength="40" value="Sunset Heist"></label>
-    <button id="export" type="button">Export PNG 1080 x 1080</button>
-    <p id="status" role="status"></p>
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">LC</span>
+    <div>
+      <h1>Leonida Cover Studio</h1>
+      <p>Your photos become Vice City poster art. Nothing leaves your machine.</p>
+    </div>
+  </div>
+  <button id="demoButton" class="btn btn-demo" type="button">Make me a cover</button>
+</header>
+
+<main class="studio">
+  <section class="controls" aria-label="Cover controls">
+    <div class="control-group">
+      <h2>Photos</h2>
+      <div id="dropZone" class="drop-zone">
+        <p>Drop photos here, or</p>
+        <button id="uploadButton" class="btn btn-secondary" type="button">Choose photos</button>
+        <input id="photoInput" type="file" accept="image/*" multiple hidden>
+      </div>
+      <div id="photoTray" class="photo-tray" aria-label="Photos to use"></div>
+      <p class="hint">Click a photo to put it in the selected panel. Double-click to fill every panel with it.</p>
+    </div>
+
+    <div class="control-group">
+      <h2>Layout</h2>
+      <div class="choice-row" role="group" aria-label="Panel layout">
+        <button type="button" class="choice" data-layout="heroGrid">
+          <span class="mini-layout mini-hero-grid" aria-hidden="true"></span>Hero Grid
+        </button>
+        <button type="button" class="choice" data-layout="viceStrip">
+          <span class="mini-layout mini-vice-strip" aria-hidden="true"></span>Vice Strip
+        </button>
+        <button type="button" class="choice" data-layout="filmstrip">
+          <span class="mini-layout mini-filmstrip" aria-hidden="true"></span>Filmstrip
+        </button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <h2>Post size</h2>
+      <div class="choice-row" role="group" aria-label="Export size">
+        <button type="button" class="choice" data-size="square">Square<br><small>1080 &times; 1080</small></button>
+        <button type="button" class="choice" data-size="portrait">Portrait<br><small>1080 &times; 1350</small></button>
+        <button type="button" class="choice" data-size="wide">Landscape<br><small>1920 &times; 1080</small></button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <h2>Colour grade</h2>
+      <div class="choice-row" role="group" aria-label="Colour grade">
+        <button type="button" class="choice grade-choice" data-grade="sunset">
+          <span class="swatch" style="background:linear-gradient(135deg,#ffc46b,#ff2e88)"></span>Vice Sunset
+        </button>
+        <button type="button" class="choice grade-choice" data-grade="neon">
+          <span class="swatch" style="background:linear-gradient(135deg,#22d3ee,#a855f7)"></span>Neon Night
+        </button>
+        <button type="button" class="choice grade-choice" data-grade="heatwave">
+          <span class="swatch" style="background:linear-gradient(135deg,#ffb347,#ff2e63)"></span>Heatwave
+        </button>
+        <button type="button" class="choice grade-choice" data-grade="noir">
+          <span class="swatch" style="background:linear-gradient(135deg,#e8ecf4,#23233a)"></span>Mono Noir
+        </button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <h2>Caption</h2>
+      <label class="field-label" for="captionInput">Title</label>
+      <input id="captionInput" type="text" maxlength="32" value="LEONIDA NIGHTS" autocomplete="off">
+      <label class="field-label" for="subtitleInput">Subtitle</label>
+      <input id="subtitleInput" type="text" maxlength="48" value="VICE CITY &bull; 2026" autocomplete="off">
+    </div>
+
+    <div class="control-group">
+      <h2>Effects</h2>
+      <label class="toggle-row"><input id="popoutToggle" type="checkbox" checked> Pop-out hero <span>hero photo breaks its frame</span></label>
+      <label class="toggle-row"><input id="grainToggle" type="checkbox" checked> Film grain <span>gritty poster texture</span></label>
+    </div>
+
+    <div class="control-group export-group">
+      <button id="exportButton" class="btn btn-primary" type="button">Export PNG</button>
+      <button id="exportAllButton" class="btn btn-secondary" type="button">Export all 3 sizes</button>
+      <p class="hint">Exports the size picked above, at full resolution, as a PNG download.</p>
+    </div>
   </section>
-  <canvas id="cover" width="1080" height="1080" aria-label="The cover"></canvas>
+
+  <section class="stage" aria-label="Live cover preview">
+    <div class="preview-frame">
+      <canvas id="previewCanvas" width="1080" height="1080"></canvas>
+    </div>
+    <div class="panel-bar">
+      <span id="panelLabel">Panel 1 of 5</span>
+      <span id="panelPhotoName">Pier</span>
+      <label class="zoom-label" for="zoomSlider">Zoom <span id="zoomValue">1.00x</span></label>
+      <input id="zoomSlider" type="range" min="1" max="2.5" step="0.05" value="1">
+      <button id="fillAllButton" class="btn btn-small" type="button">Use in all panels</button>
+    </div>
+    <p id="statusLine" class="status" role="status">Loading samples&hellip;</p>
+  </section>
 </main>
-<script type="module" src="./src/main.js"></script>
+
+<script type="module" src="src/main.js"></script>
 </body>
 </html>

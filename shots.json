@@ -1,5 +1,1 @@
-[
-  { "name": "1-cover.jpg", "query": "?shot=cover&photo=pier&caption=Sunset%20Heist", "w": 1080, "h": 1080 },
-  { "name": "2-editor.jpg", "query": "?shot=editor&photo=boulevard&caption=Boulevard%20Queen", "w": 1280, "h": 720 },
-  { "name": "3-cover.jpg", "query": "?shot=cover&photo=boulevard&caption=Boulevard%20Queen", "w": 1080, "h": 1080 }
-]
+[{"h":720,"name":"1-cover.jpg","query":"?shot=cover&size=wide&layout=heroGrid&grade=sunset&caption=LEONIDA%20NIGHTS&subtitle=VICE%20CITY%20%E2%80%A2%202026","w":1280},{"h":720,"name":"2-editor.jpg","query":"?shot=editor&size=square&layout=heroGrid&grade=sunset&caption=LEONIDA%20NIGHTS&subtitle=VICE%20CITY%20%E2%80%A2%202026","w":1280},{"h":1080,"name":"3-square.jpg","query":"?shot=cover&size=square&layout=viceStrip&grade=neon&caption=VICE%20CITY&subtitle=WELCOME%20TO%20LEONIDA","w":1080},{"h":1280,"name":"4-portrait.jpg","query":"?shot=cover&size=portrait&layout=filmstrip&grade=heatwave&caption=HEATWAVE&subtitle=SUMMER%20IN%20LEONIDA","w":1024}]
